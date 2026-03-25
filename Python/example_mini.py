@@ -33,6 +33,13 @@ depth_data = np.zeros((height, width), dtype=np.float32)
 color_data = np.zeros((height, width,3), dtype=np.uint8)
 pointcloud_data = np.zeros((width*height*3,), dtype=np.float32)
 
+calib = MINI.CalibrationParam()
+ret = camera.getCalibrationParam(calib)
+print("ret:", ret)
+print("get_intrinsic:", MINI.get_intrinsic(calib))
+print("get_extrinsic:", MINI.get_extrinsic(calib))
+print("get_distortion:", MINI.get_distortion(calib))
+
 # ####################采集模式的选择##############
 camera.captureData(capture_num[0], "time")
 
@@ -52,7 +59,7 @@ if(channels==1):
 
 elif(channels==3):
 
-    ret = camera.getUndistortColorBrightnessData(color_data, KW.Color.Rgb)
+    ret = camera.getUndistortColorBrightnessData(color_data, MINI.Color.Rgb)
     ret = camera.getDepthData(depth_data)
     ret = camera.getPointcloudData(pointcloud_data)
 
