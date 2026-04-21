@@ -3,6 +3,7 @@
 #include "xcamera.h"
 #include "enumerate.h"
 #include <opencv2/opencv.hpp>
+#include <iomanip>
 using namespace CAMERA;
 
 int main()
@@ -31,6 +32,40 @@ int main()
 	{
 		std::cout << "Connect Camera Error!";
 		return -1;
+	}
+
+	// Get calibration parameters
+	CalibrationParam calib_param;
+	ret_code = p_camera->getCalibrationParam(&calib_param);
+
+	if (0 == ret_code)
+	{
+		std::cout << std::fixed << std::setprecision(6);
+
+		std::cout << "\nintrinsic:" << std::endl;
+		for (int r = 0; r < 3; r++)
+		{
+			for (int c = 0; c < 3; c++)
+				std::cout << calib_param.intrinsic[3 * r + c] << "\t";
+			std::cout << std::endl;
+		}
+
+		std::cout << "\ndistortion:" << std::endl;
+		for (int c = 0; c < 5; c++)
+			std::cout << calib_param.distortion[c] << "\t";
+		std::cout << std::endl;
+
+		std::cout << "\nextrinsic:" << std::endl;
+		for (int r = 0; r < 4; r++)
+		{
+			for (int c = 0; c < 4; c++)
+				std::cout << calib_param.extrinsic[4 * r + c] << "\t";
+			std::cout << std::endl;
+		}
+	}
+	else
+	{
+		std::cout << "Get Calibration Param Error!" << std::endl;
 	}
 
 	// 分配内存保存采集结果
@@ -98,8 +133,10 @@ int main()
 				ret_code = p_camera->getColorBrightnessData(color_brightness_data, Color::Bgr);
 				if (0 == ret_code)
 				{
-					cv::Mat bright = cv::Mat(height, width, CV_8UC3, color_brightness_data);
-					cv::imwrite("bright.bmp", bright);
+					cv::Mat bright_bgr = cv::Mat(height, width, CV_8UC3, color_brightness_data);
+					cv::Mat bright_rgb;
+					cv::cvtColor(bright_bgr, bright_rgb, cv::COLOR_BGR2RGB);
+					cv::imwrite("bright.bmp", bright_rgb);
 					std::cout << "Get color Brightness!" << std::endl;
 				}
 				

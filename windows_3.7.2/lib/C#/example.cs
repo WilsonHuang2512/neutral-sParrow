@@ -7,6 +7,71 @@ namespace KW_Camera_Color
 {
     class Program
     {
+        // 打印标定参数
+        static void PrintCalibration(CameraCsharp.CalibrationParam calib)
+        {
+            Console.WriteLine("\nIntrinsic:");
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                    Console.Write("{0:F6}\t", calib.intrinsic[3 * r + c]);
+                Console.WriteLine();
+            }
+
+            Console.WriteLine("\nDistortion:");
+            for (int c = 0; c < 5; c++)
+                Console.Write("{0:F6}\t", calib.distortion[c]);
+            Console.WriteLine();
+
+            Console.WriteLine("\nExtrinsic:");
+            for (int r = 0; r < 4; r++)
+            {
+                for (int c = 0; c < 4; c++)
+                    Console.Write("{0:F6}\t", calib.extrinsic[4 * r + c]);
+                Console.WriteLine();
+            }
+        }
+
+        // 保存BGR亮度图为BMP文件
+        static void SaveBgrAsBmp(IntPtr bgrPtr, int width, int height, string filename)
+        {
+            byte[] bgr = new byte[width * height * 3];
+            Marshal.Copy(bgrPtr, bgr, 0, bgr.Length);
+
+            int rowStride = width * 3;
+            int fileSize = 54 + rowStride * height;
+
+            byte[] header = new byte[54];
+            header[0] = (byte)'B'; header[1] = (byte)'M';
+            header[2] = (byte)(fileSize); header[3] = (byte)(fileSize >> 8);
+            header[4] = (byte)(fileSize >> 16); header[5] = (byte)(fileSize >> 24);
+            header[10] = 54;
+            header[14] = 40;
+            header[18] = (byte)(width); header[19] = (byte)(width >> 8);
+            header[20] = (byte)(width >> 16); header[21] = (byte)(width >> 24);
+            int negH = -height;
+            header[22] = (byte)(negH); header[23] = (byte)(negH >> 8);
+            header[24] = (byte)(negH >> 16); header[25] = (byte)(negH >> 24);
+            header[26] = 1;
+            header[28] = 24;
+
+            // 交换R和B通道，确保图像颜色正确
+            byte[] pixels = new byte[rowStride * height];
+            for (int i = 0; i < width * height; i++)
+            {
+                pixels[i * 3 + 0] = bgr[i * 3 + 2]; // B <- R
+                pixels[i * 3 + 1] = bgr[i * 3 + 1]; // G
+                pixels[i * 3 + 2] = bgr[i * 3 + 0]; // R <- B
+            }
+
+            using (var fs = new System.IO.FileStream(filename, System.IO.FileMode.Create))
+            {
+                fs.Write(header, 0, 54);
+                fs.Write(pixels, 0, pixels.Length);
+            }
+            Console.WriteLine("Saved: " + filename);
+        }
+
         static void Main(string[] args)
         {
             CameraCls camera = new CameraCls();
@@ -15,139 +80,101 @@ namespace KW_Camera_Color
             int ret_code;
 
             // 连接相机
-            Console.WriteLine("正在连接相机...");
             ret_code = camera.DfConnect_Csharp(cameraId);
 
-            int width = 0;
-            int height = 0;
-            int channels = 0;
+            int width = 0, height = 0, channels = 0;
 
             if (ret_code == 0)
             {
-                Console.WriteLine("相机连接成功!");
-                ret_code = camera.GetCameraResolution_Csharp(out width, out height);
-                Console.WriteLine("Width: {0}", width);
-                Console.WriteLine("Height: {0}", height);
+                // 必须连接相机成功后，才可获取相机分辨率
+                camera.GetCameraResolution_Csharp(out width, out height);
+                Console.WriteLine("Width: {0}  Height: {1}", width, height);
 
-                ret_code = camera.DfGetCameraChannels_Csharp(out channels);
+                camera.DfGetCameraChannels_Csharp(out channels);
                 Console.WriteLine("Channels: {0}", channels);
             }
             else
             {
-                Console.WriteLine("连接相机失败!");
+                Console.WriteLine("Connect Camera Error!");
                 Console.ReadKey();
                 return;
             }
 
-            // 分配内存保存采集结果
-            StringBuilder timestamp = new StringBuilder(30);
-
-            // 根据通道数分配不同大小的亮度图内存
-            int brightnessSize = (channels == 3) ? (width * height * 3) : (width * height);
-            byte[] brightnessArray = new byte[brightnessSize];
-            IntPtr brightnessPtr = Marshal.AllocHGlobal(brightnessArray.Length);
-
-            float[] depthArray = new float[width * height];
-            IntPtr depthPtr = Marshal.AllocHGlobal(depthArray.Length * sizeof(float));
-
-            float[] point_cloud_Array = new float[width * height * 3];
-            IntPtr point_cloud_Ptr = Marshal.AllocHGlobal(point_cloud_Array.Length * sizeof(float));
-
-            // 读取JSON配置
-            StringBuilder config_json = new StringBuilder(20480);
-            StringBuilder status_json = new StringBuilder(20480);
-            int num;
-            string path = "3.json";
-
-            Console.WriteLine("正在读取配置文件...");
-            camera.DfReadJson_Csharp(config_json, path);
-            camera.DfSetParamJson_Csharp(config_json, status_json, out num);
-            Console.WriteLine("配置文件加载成功!");
-
-            // 采集数据
-            Console.WriteLine("正在采集数据...");
-            ret_code = camera.DfCaptureData_Csharp(num, timestamp);
-
-            if (ret_code == 0)
+            // 获取相机标定参数
+            CameraCsharp.CalibrationParam calib;
+            ret_code = camera.DfGetCalibrationParam_Csharp(out calib);
+            if (0 == ret_code)
             {
-                Console.WriteLine("数据采集成功!");
-
-                // 根据通道数选择不同的获取方式
-                if (channels == 1)
-                {
-                    // 灰度相机
-                    Console.WriteLine("检测到灰度相机，获取灰度亮度图...");
-                    ret_code = camera.DfGetUndistortBrightnessData_Csharp(brightnessPtr);
-                    
-                    if (ret_code == 0)
-                    {
-                        Console.WriteLine("灰度亮度图获取成功!");
-                    }
-                }
-                else if (channels == 3)
-                {
-                    // 彩色相机
-                    Console.WriteLine("检测到彩色相机，获取彩色亮度图...");
-                    ret_code = camera.DfGetUndistortColorBrightnessData_Csharp(brightnessPtr, Color.Bgr);
-                    
-                    if (ret_code == 0)
-                    {
-                        Console.WriteLine("彩色亮度图获取成功!");
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("警告: 不支持的通道数 {0}", channels);
-                }
-
-                // 获取深度图数据
-                Console.WriteLine("正在获取深度图...");
-                ret_code = camera.DfGetUndistortDepthDataFloat_Csharp(depthPtr);
-
-                // 获取点云数据
-                Console.WriteLine("正在获取点云数据...");
-                ret_code = camera.DfGetPointcloudData_Csharp(point_cloud_Ptr);
-
-                // 保存点云 - 根据通道数使用不同文件名
-                Console.WriteLine("正在保存点云文件...");
-                string ply, pcd;
-                
-                if (channels == 1)
-                {
-                    ply = "pointcloud.ply";
-                    pcd = "pointcloud.pcd";
-                }
-                else
-                {
-                    ply = "color_cloud.ply";
-                    pcd = "color_cloud.pcd";
-                }
-                
-                camera.savePointcloudToPly_Csharp(point_cloud_Ptr, brightnessPtr, channels, ply);
-                camera.savePointcloudToPcd_Csharp(point_cloud_Ptr, brightnessPtr, channels, pcd);
-                Console.WriteLine("点云保存成功: {0}, {1}", pcd, ply);
-
-                // 复制数据到托管数组
-                Marshal.Copy(brightnessPtr, brightnessArray, 0, brightnessArray.Length);
-                Marshal.Copy(depthPtr, depthArray, 0, depthArray.Length);
-                Marshal.Copy(point_cloud_Ptr, point_cloud_Array, 0, point_cloud_Array.Length);
-
-                // 释放内存
-                Marshal.FreeHGlobal(brightnessPtr);
-                Marshal.FreeHGlobal(depthPtr);
-                Marshal.FreeHGlobal(point_cloud_Ptr);
+                PrintCalibration(calib);
             }
             else
             {
-                Console.WriteLine("采集数据失败!");
+                Console.WriteLine("Get Calibration Param Error!");
             }
 
-            // 断开相机
-            ret_code = camera.DfDisconnect_Csharp(cameraId);
-            if (ret_code == 0)
+            // 分配内存保存采集结果
+            StringBuilder timestamp = new StringBuilder(30);
+            int brightnessSize = (channels == 3) ? (width * height * 3) : (width * height);
+            IntPtr brightnessPtr = Marshal.AllocHGlobal(brightnessSize);
+            IntPtr depthPtr = Marshal.AllocHGlobal(width * height * sizeof(float));
+            IntPtr pcdPtr = Marshal.AllocHGlobal(width * height * 3 * sizeof(float));
+
+            // 设置参数 - 使用JSON配置文件
+            StringBuilder config_json = new StringBuilder(20480);
+            StringBuilder status_json = new StringBuilder(20480);
+            int num;
+            camera.DfReadJson_Csharp(config_json, "3.json");
+            camera.DfSetParamJson_Csharp(config_json, status_json, out num);
+
+            // 采集数据
+            ret_code = camera.DfCaptureData_Csharp(num, timestamp);
+
+            if (0 == ret_code)
             {
-                Console.WriteLine("相机已断开!");
+                if (channels == 1)
+                {
+                    // 获取灰度亮度图数据
+                    ret_code = camera.DfGetUndistortBrightnessData_Csharp(brightnessPtr);
+                    if (0 == ret_code) Console.WriteLine("Get Brightness!");
+                }
+                else if (channels == 3)
+                {
+                    // 获取彩色亮度图数据并保存 - 使用BGR格式（点云颜色正确）
+                    ret_code = camera.DfGetUndistortColorBrightnessData_Csharp(brightnessPtr, Color.Bgr);
+                    if (0 == ret_code)
+                    {
+                        Console.WriteLine("Get color Brightness!");
+                        SaveBgrAsBmp(brightnessPtr, width, height, "bright.bmp");
+                    }
+                }
+
+                // 获取深度图数据
+                ret_code = camera.DfGetUndistortDepthDataFloat_Csharp(depthPtr);
+                if (0 == ret_code) Console.WriteLine("Get Depth!");
+
+                // 获取点云数据并保存
+                ret_code = camera.DfGetPointcloudData_Csharp(pcdPtr);
+                if (0 == ret_code)
+                {
+                    string ply = (channels == 3) ? "color_cloud.ply" : "pointcloud.ply";
+                    string pcd = (channels == 3) ? "color_cloud.pcd" : "pointcloud.pcd";
+                    camera.savePointcloudToPly_Csharp(pcdPtr, brightnessPtr, channels, ply);
+                    camera.savePointcloudToPcd_Csharp(pcdPtr, brightnessPtr, channels, pcd);
+                    Console.WriteLine("Get Pointcloud!");
+                }
             }
+            else
+            {
+                Console.WriteLine("Capture Data Error!");
+            }
+
+            // 释放内存
+            Marshal.FreeHGlobal(brightnessPtr);
+            Marshal.FreeHGlobal(depthPtr);
+            Marshal.FreeHGlobal(pcdPtr);
+
+            // 断开相机
+            camera.DfDisconnect_Csharp(cameraId);
 
             Console.WriteLine("\n按任意键退出...");
             Console.ReadKey();
