@@ -1,0 +1,3 @@
+使用：
+1、请将hAcqCamera.dll拷贝到halcon安装目录下的\bin\x64-win64文件夹下
+2、camera_server启动：启动camera_server文件夹->camera_server_halcon_GPU文件夹或camera_server_halcon_CPU文件夹里的server即可
